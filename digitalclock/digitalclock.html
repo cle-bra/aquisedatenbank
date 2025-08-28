@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Responsive Digital Clock</title>
+    <link rel="stylesheet" href="digitalclock.css">
+</head>
+<body>
+    <div class="clock-wrapper">
+        <div class="digital-watch">
+            <svg width="0" height="0" viewBox="0 0 0 0">
+                <defs>
+                    <g id="unit-h">
+                        <path d="M0 20 L20 40 L180 40 L200 20 L180 0 L20 0 Z"></path>
+                    </g>
+                    <g id="unit-v">
+                        <path d="M20 0 L0 20 L0 180 L20 200 L40 180 L40 20 Z"></path>
+                    </g>
+                </defs>
+            </svg>
+
+            <!-- Digit-Groups -->
+            <div class="hour">
+                <svg id="hour-1" class="digit num-0" viewBox="0 0 260 480">
+                    <use xlink:href="#unit-h" class="segment a" x="30" y="0" />
+                    <use xlink:href="#unit-v" class="segment b" x="220" y="30" />
+                    <use xlink:href="#unit-v" class="segment c" x="220" y="250" />
+                    <use xlink:href="#unit-h" class="segment d" x="30" y="440" />
+                    <use xlink:href="#unit-v" class="segment e" x="0" y="250" />
+                    <use xlink:href="#unit-v" class="segment f" x="0" y="30" />
+                    <use xlink:href="#unit-h" class="segment g" x="30" y="220" />
+                </svg>
+                <svg id="hour-2" class="digit num-0" viewBox="0 0 260 480">
+                    <use xlink:href="#unit-h" class="segment a" x="30" y="0" />
+                    <use xlink:href="#unit-v" class="segment b" x="220" y="30" />
+                    <use xlink:href="#unit-v" class="segment c" x="220" y="250" />
+                    <use xlink:href="#unit-h" class="segment d" x="30" y="440" />
+                    <use xlink:href="#unit-v" class="segment e" x="0" y="250" />
+                    <use xlink:href="#unit-v" class="segment f" x="0" y="30" />
+                    <use xlink:href="#unit-h" class="segment g" x="30" y="220" />
+                </svg>
+            </div>
+
+            <!-- Doppelpunkt 1 -->
+            <div class="colon">
+                <div class="dot"></div>
+                <div class="dot"></div>
+            </div>
+
+            <div class="minute">
+                <svg id="minute-1" class="digit num-0" viewBox="0 0 260 480">
+                    <use xlink:href="#unit-h" class="segment a" x="30" y="0" />
+                    <use xlink:href="#unit-v" class="segment b" x="220" y="30" />
+                    <use xlink:href="#unit-v" class="segment c" x="220" y="250" />
+                    <use xlink:href="#unit-h" class="segment d" x="30" y="440" />
+                    <use xlink:href="#unit-v" class="segment e" x="0" y="250" />
+                    <use xlink:href="#unit-v" class="segment f" x="0" y="30" />
+                    <use xlink:href="#unit-h" class="segment g" x="30" y="220" />
+                </svg>
+                <svg id="minute-2" class="digit num-0" viewBox="0 0 260 480">
+                    <use xlink:href="#unit-h" class="segment a" x="30" y="0" />
+                    <use xlink:href="#unit-v" class="segment b" x="220" y="30" />
+                    <use xlink:href="#unit-v" class="segment c" x="220" y="250" />
+                    <use xlink:href="#unit-h" class="segment d" x="30" y="440" />
+                    <use xlink:href="#unit-v" class="segment e" x="0" y="250" />
+                    <use xlink:href="#unit-v" class="segment f" x="0" y="30" />
+                    <use xlink:href="#unit-h" class="segment g" x="30" y="220" />
+                </svg>
+            </div>
+
+            <!-- Doppelpunkt 1 -->
+            <div class="colon">
+                <div class="dot"></div>
+                <div class="dot"></div>
+            </div>
+
+            <div class="second">
+                <svg id="second-1" class="digit num-0" viewBox="0 0 260 480">
+                    <use xlink:href="#unit-h" class="segment a" x="30" y="0" />
+                    <use xlink:href="#unit-v" class="segment b" x="220" y="30" />
+                    <use xlink:href="#unit-v" class="segment c" x="220" y="250" />
+                    <use xlink:href="#unit-h" class="segment d" x="30" y="440" />
+                    <use xlink:href="#unit-v" class="segment e" x="0" y="250" />
+                    <use xlink:href="#unit-v" class="segment f" x="0" y="30" />
+                    <use xlink:href="#unit-h" class="segment g" x="30" y="220" />
+                </svg>
+                <svg id="second-2" class="digit num-0" viewBox="0 0 260 480">
+                    <use xlink:href="#unit-h" class="segment a" x="30" y="0" />
+                    <use xlink:href="#unit-v" class="segment b" x="220" y="30" />
+                    <use xlink:href="#unit-v" class="segment c" x="220" y="250" />
+                    <use xlink:href="#unit-h" class="segment d" x="30" y="440" />
+                    <use xlink:href="#unit-v" class="segment e" x="0" y="250" />
+                    <use xlink:href="#unit-v" class="segment f" x="0" y="30" />
+                    <use xlink:href="#unit-h" class="segment g" x="30" y="220" />
+                </svg>
+            </div>
+        </div>   
+        <!-- Datum -->
+        <div class="digital-date-svg" id="digital-date-svg">
+
+            <!-- Hier generieren wir später SVG-Ziffern dynamisch -->
+        </div>
+    </div>
+
+<script>
+	function updateClock() {
+		const now = new Date();
+	
+		const hour = now.getHours().toString().padStart(2, '0');
+		const minute = now.getMinutes().toString().padStart(2, '0');
+		const second = now.getSeconds().toString().padStart(2, '0');
+	
+		const ids = ['hour-1', 'hour-2', 'minute-1', 'minute-2', 'second-1', 'second-2'];
+		const digits = [hour[0], hour[1], minute[0], minute[1], second[0], second[1]];
+	
+		ids.forEach((id, i) => {
+			const el = document.getElementById(id);
+	
+			// Entferne alte num-X Klassen (0–9)
+			for (let n = 0; n <= 9; n++) {
+				el.classList.remove('num-' + n);
+			}
+	
+			// Neue Klasse hinzufügen
+			el.classList.add('num-' + digits[i]);
+		});
+	}
+	
+	setInterval(updateClock, 1000);
+	updateClock(); // Initialstart
+	</script>
+<script>
+    function createDigitSvg(id, num) {
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 260 480");
+        svg.setAttribute("class", "digit num-" + num);
+    
+        const segments = [
+            { cls: "a", x: 30, y: 0 },
+            { cls: "b", x: 220, y: 30 },
+            { cls: "c", x: 220, y: 250 },
+            { cls: "d", x: 30, y: 440 },
+            { cls: "e", x: 0, y: 250 },
+            { cls: "f", x: 0, y: 30 },
+            { cls: "g", x: 30, y: 220 }
+        ];
+    
+        segments.forEach(seg => {
+            const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+            use.setAttributeNS("http://www.w3.org/1999/xlink", "href", "#unit-" + (["a", "d", "g"].includes(seg.cls) ? "h" : "v"));
+            use.setAttribute("x", seg.x);
+            use.setAttribute("y", seg.y);
+            use.setAttribute("class", "segment " + seg.cls);
+            svg.appendChild(use);
+        });
+    
+        return svg;
+    }
+    
+    function renderDateDigits() {
+        const container = document.getElementById("digital-date-svg");
+        container.innerHTML = "";
+    
+        const now = new Date();
+        const day = now.getDate().toString().padStart(2, "0");
+        const month = (now.getMonth() + 1).toString().padStart(2, "0");
+        const year = now.getFullYear().toString();
+    
+        const dateString = `${year}.${month}.${day}`;
+    
+        for (const char of dateString) {
+            if (char === ".") {
+                const dot = document.createElement("div");
+                dot.className = "dot";
+                container.appendChild(dot);
+            } else {
+                const digit = createDigitSvg(null, char);
+                container.appendChild(digit);
+            }
+        }
+    }
+    
+    renderDateDigits();
+    </script>
+    
+
+	</body>
+	</html>
+	

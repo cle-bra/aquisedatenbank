@@ -1,0 +1,212 @@
+body {
+	margin: 0;
+	padding: 0;
+	height: 100vh;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	background-color: #f8f9fa;
+}
+
+.digital-watch {
+	display: flex;
+	flex-wrap: nowrap;
+	justify-content: center;
+	align-items: center;
+	gap: 2vw;
+	width: 90vw;
+	max-width: 1200px;
+}
+
+.digital-watch .hour,
+.digital-watch .minute,
+.digital-watch .second {
+	display: flex;
+	gap: 1vw;
+	position: relative;
+}
+
+.digital-watch svg.digit {
+	width: clamp(50px, 15vw, 130px);
+	height: auto;
+}
+
+.digit .segment {
+	fill: rgba(0, 0, 0, 0.03);
+	transition: 0.3s ease-in-out;
+}
+
+/* Aktive Segmente je Ziffer */
+.digit.num-0 .a,
+.digit.num-0 .b,
+.digit.num-0 .c,
+.digit.num-0 .d,
+.digit.num-0 .e,
+.digit.num-0 .f,
+
+.digit.num-1 .b,
+.digit.num-1 .c,
+
+.digit.num-2 .a,
+.digit.num-2 .b,
+.digit.num-2 .d,
+.digit.num-2 .e,
+.digit.num-2 .g,
+
+.digit.num-3 .a,
+.digit.num-3 .b,
+.digit.num-3 .c,
+.digit.num-3 .d,
+.digit.num-3 .g,
+
+.digit.num-4 .b,
+.digit.num-4 .c,
+.digit.num-4 .f,
+.digit.num-4 .g,
+
+.digit.num-5 .a,
+.digit.num-5 .c,
+.digit.num-5 .d,
+.digit.num-5 .f,
+.digit.num-5 .g,
+
+.digit.num-6 .a,
+.digit.num-6 .c,
+.digit.num-6 .d,
+.digit.num-6 .e,
+.digit.num-6 .f,
+.digit.num-6 .g,
+
+.digit.num-7 .a,
+.digit.num-7 .b,
+.digit.num-7 .c,
+
+.digit.num-8 .a,
+.digit.num-8 .b,
+.digit.num-8 .c,
+.digit.num-8 .d,
+.digit.num-8 .e,
+.digit.num-8 .f,
+.digit.num-8 .g,
+
+.digit.num-9 .a,
+.digit.num-9 .b,
+.digit.num-9 .c,
+.digit.num-9 .d,
+.digit.num-9 .f,
+.digit.num-9 .g {
+	fill: #006699;
+}
+
+/* Doppelpunkte */
+.colon {
+	display: flex;
+	flex-direction: column;
+	justify-content: space-around;
+	align-items: center;
+	height: clamp(60px, 20vw, 160px);
+	/*margin: 0 1vw;*/
+	margin: 0 0.3vw;
+}
+
+.colon .dot {
+	width: clamp(8px, 1.5vw, 15px);
+	height: clamp(8px, 1.5vw, 15px);
+	background-color: #006699;
+	border-radius: 50%;
+}
+
+.clock-wrapper {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+}
+
+/* Ab hier das Datum */
+
+.digital-date-svg {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	gap: 0.5vw;
+	margin-top: 2vh;
+	flex-wrap: wrap;
+	flex-shrink: 1;
+}
+
+.digital-date-svg .digit {
+	width: clamp(30px, 6vw, 80px);
+	height: auto;
+}
+
+.digital-date-svg .dot {
+	width: clamp(6px, 1vw, 10px);
+	height: clamp(6px, 1vw, 10px);
+	background-color: #006699;
+	border-radius: 50%;
+	margin: 0 clamp(3px, 0.3vw, 6px);
+}
+
+
+
+/* Sekunden verkleinern im Smartphone */
+@media (max-width: 1500px) {
+	.digital-watch {
+		gap: 1vw;
+	}
+	.digital-watch .hour,
+	.digital-watch .minute,
+	.digital-watch .second,
+	.colon {
+		margin: 0 0.5vw;
+	}
+
+	.digital-watch .hour {
+		transform: scale(0.8);
+		transform-origin: center;
+	}
+	.digital-watch .minute {
+		transform: scale(0.8);
+		transform-origin: center;
+	}
+	.digital-watch .second {
+		transform: scale(0.7);
+		transform-origin: center;
+	}
+}
+
+
+@media (max-width: 1000px) {
+	.digital-watch {
+		gap: 0.5vw;
+		flex-direction: row;
+	}
+	.digital-watch .hour,
+	.digital-watch .minute,
+	.digital-watch .second,
+	.colon {
+		margin: 0 0.2vw;
+	}
+	.colon {
+		height: clamp(30px, 8vw, 60px);
+	}
+	.colon .dot {
+		width: clamp(4px, 1vw, 8px);
+		height: clamp(4px, 1vw, 8px);
+	}
+
+	.digital-watch .hour {
+		transform: scale(0.6);
+		transform-origin: center;
+	}
+	.digital-watch .minute {
+		transform: scale(0.6);
+		transform-origin: center;
+	}
+	.digital-watch .second {
+		transform: scale(0.6);
+		transform-origin: center;
+	}
+}
+
