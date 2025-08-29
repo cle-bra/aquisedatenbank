@@ -89,7 +89,7 @@ try{ $st=$pdo->prepare($sql); $st->execute($params); $rows=$st->fetchAll(); }cat
               </td>
               <td><?= (int)$r['companies_count'] ?></td>
               <td><?= (int)$r['calls_count'] ?></td>
-              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="/campaign_view.php?id=<?= (int)$r['id'] ?>">Öffnen</a></td>
+              <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="/public/campaign_view.php?id=<?= (int)$r['id'] ?>">Öffnen</a></td>
             </tr>
           <?php endforeach; endif; ?>
         </tbody>
