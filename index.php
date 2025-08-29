@@ -36,7 +36,7 @@ function is_logged_in() { return isset($_SESSION['user']); }
       <div class="d-flex align-items-center gap-2">
         <?php if (is_logged_in()): ?>
           <span class="navbar-text text-white-50">👤 <?= htmlspecialchars($_SESSION['user']['full_name'] ?? $_SESSION['user']['username']) ?></span>
-          <a class="btn btn-outline-light btn-sm" href="/dashboard.php">Dashboard</a>
+          <a class="btn btn-outline-light btn-sm" href="/public/dashboard.php">Dashboard</a>
           <a class="btn btn-warning btn-sm" href="/logout.php">Logout</a>
         <?php else: ?>
           <a class="btn btn-outline-light btn-sm" href="/public/login.php">Login</a>
@@ -55,7 +55,7 @@ function is_logged_in() { return isset($_SESSION['user']); }
           <p class="lead">Steuern Sie Telefonaquise, Kampagnen und Skripte für das KNX‑Trainingcenter. Voll responsiv auf Basis von Bootstrap 5.</p>
           <div class="d-flex flex-wrap gap-2">
             <?php if (is_logged_in()): ?>
-              <a href="/dashboard.php" class="btn btn-primary btn-lg">Zum Dashboard</a>
+              <a href="/public/dashboard.php" class="btn btn-primary btn-lg">Zum Dashboard</a>
               <a href="/public/logout.php" class="btn btn-outline-light btn-lg">Abmelden</a>
             <?php else: ?>
               <a href="/public/login.php" class="btn btn-primary btn-lg">Jetzt anmelden</a>
