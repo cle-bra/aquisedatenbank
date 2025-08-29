@@ -109,7 +109,8 @@ function sort_link($key,$label){
       <?php if (!empty($camp['description'])): ?><div class="small mt-1"><?= nl2br(e($camp['description'])) ?></div><?php endif; ?>
     </div>
     <div>
-      <a class="btn btn-outline-secondary btn-sm" href="/campaigns.php">← Zur Übersicht</a>
+      <a class="btn btn-outline-secondary btn-sm" href="/public/campaigns.php">← Zur Übersicht</a>
+      <a class="btn btn-outline-secondary btn-sm" href="/public/script_builder.php?campaign_id=<?= $campId?>">Scriptbuilder</a>
     </div>
   </div>
 
