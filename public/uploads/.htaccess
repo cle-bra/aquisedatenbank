@@ -1,0 +1,4 @@
+# Keine Skriptausführung
+Options -ExecCGI
+AddType text/plain .php .php5 .phtml .phps .php7 .php8
+php_flag engine off
