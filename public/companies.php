@@ -1,5 +1,5 @@
 <?php
-// public/companies.php – Firmenliste: Bulk-Zuordnung via Checkboxen, dezenter Bearbeiten-Link, ohne Row-Buttons
+// public/companies.php – Firmenliste mit dynamischer Spaltenauswahl & erweiterter Sortierung
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 if (!isset($_SESSION['user'])) { header('Location: /login.php'); exit; }
 require_once '../includes/mysql.php'; // $pdo
@@ -8,9 +8,137 @@ function e($s){ return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8'); }
 function csrf_token(){ if (empty($_SESSION['csrf'])) $_SESSION['csrf']=bin2hex(random_bytes(32)); return $_SESSION['csrf']; }
 function flash($k,$m=null){ if($m!==null){$_SESSION['flash'][$k]=$m;return;} $mm=$_SESSION['flash'][$k]??null; unset($_SESSION['flash'][$k]); return $mm; }
 
-// ---- Optionen ----
-$allowedSort = ['name','street','city','zip','state','industry','website','email_general','phone_general','created_at','updated_at'];
-$sort = $_GET['sort'] ?? 'name'; if (!in_array($sort,$allowedSort,true)) $sort='name';
+/**
+ * Spalten-Metadaten: Label, DB-Feld (für Sortierung), Render (optional), Klassen, sortierbar?
+ * Reihenfolge hier ist die Reihenfolge im Spaltenpicker; Anzeige-Reihenfolge = Reihenfolge der sichtbaren Keys.
+ */
+$columns = [
+  'id' => [
+    'label' => 'ID',
+    'db' => 'co.id',
+    'sortable' => true,
+    'td_class' => 'text-muted',
+    'render' => function($r){ return (int)$r['id']; }
+  ],
+  'name' => [
+    'label' => 'Firma',
+    'db' => 'co.name',
+    'sortable' => true,
+    'td_class' => 'company-cell',
+    'render' => function($r){
+      $html  = '<div class="fw-semibold">'.e($r['name'] ?: '—').'</div>';
+      $html .= '<div class="actions"><a href="/public/company_edit.php?id='.(int)$r['id'].'" class="link-secondary link-underline-opacity-0">Bearbeiten</a></div>';
+      return $html;
+    }
+  ],
+  'street' => [ 'label'=>'Straße', 'db'=>'co.street', 'sortable'=>true ],
+  'zip'    => [ 'label'=>'PLZ', 'db'=>'co.zip', 'sortable'=>true ],
+  'city'   => [ 'label'=>'Stadt', 'db'=>'co.city', 'sortable'=>true ],
+  'state'  => [ 'label'=>'Bundesland', 'db'=>'co.state', 'sortable'=>true ],
+  'industry' => [ 'label'=>'Branche', 'db'=>'co.industry', 'sortable'=>true ],
+  'business_purpose' => [
+    'label'=>'Unternehmenszweck',
+    'db'=>'co.business_purpose',
+    'sortable'=>true,
+    'td_class'=>'td-wide'
+  ],
+  'legal_form' => [ 'label'=>'Rechtsform', 'db'=>'co.legal_form', 'sortable'=>true ],
+  'register_court'  => [ 'label'=>'Registergericht', 'db'=>'co.register_court', 'sortable'=>true ],
+  'register_number' => [ 'label'=>'Registernummer', 'db'=>'co.register_number', 'sortable'=>true ],
+  'employees' => [
+    'label'=>'Mitarbeiter',
+    'db'=>'co.employees',
+    'sortable'=>true,
+    'td_class'=>'text-end',
+    'render'=>function($r){
+      if ($r['employees'] === null || $r['employees'] === '') return '—';
+      return number_format((int)$r['employees'], 0, ',', '.');
+    }
+  ],
+  'revenue' => [
+    'label'=>'Umsatz',
+    'db'=>'co.revenue',
+    'sortable'=>true,
+    'td_class'=>'text-end',
+    'render'=>function($r){
+      if ($r['revenue'] === null || $r['revenue'] === '') return '—';
+      $val = (float)$r['revenue'];
+      return number_format($val, 2, ',', '.').' €';
+    }
+  ],
+  'size_class' => [ 'label'=>'Größenklasse', 'db'=>'co.size_class', 'sortable'=>true ],
+//  'external_id' => [ 'label'=>'Externe ID', 'db'=>'co.external_id', 'sortable'=>true ],
+  'website' => [
+    'label'=>'Webseite',
+    'db'=>'co.website',
+    'sortable'=>true,
+    'td_class'=>'td-narrow',
+    'render'=>function($r){
+      if (!empty($r['website'])) return '<a href="'.e($r['website']).'" target="_blank" rel="noopener noreferrer">'.e($r['website']).'</a>';
+      return '—';
+    }
+  ],
+  'email_general' => [
+    'label'=>'E‑Mail (allg.)',
+    'db'=>'co.email_general',
+    'sortable'=>true,
+    'td_class'=>'td-narrow',
+    'render'=>function($r){
+      if (!empty($r['email_general'])) return '<a href="mailto:'.e($r['email_general']).'">'.e($r['email_general']).'</a>';
+      return '—';
+    }
+  ],
+  'phone_general' => [ 'label'=>'Telefon (allg.)', 'db'=>'co.phone_general', 'sortable'=>true ],
+  'created_at' => [
+    'label'=>'Erstellt',
+    'db'=>'co.created_at',
+    'sortable'=>true,
+    'td_class'=>'text-nowrap',
+    'render'=>function($r){
+      if (empty($r['created_at'])) return '—';
+      return date('d.m.Y H:i', strtotime($r['created_at']));
+    }
+  ],
+  'updated_at' => [
+    'label'=>'Aktualisiert',
+    'db'=>'co.updated_at',
+    'sortable'=>true,
+    'td_class'=>'text-nowrap',
+    'render'=>function($r){
+      if (empty($r['updated_at'])) return '—';
+      return date('d.m.Y H:i', strtotime($r['updated_at']));
+    }
+  ],
+  'campaigns' => [
+    'label'=>'Kampagnen',
+    'db'=>null,          // computed
+    'sortable'=>false
+  ],
+];
+
+/** Sort-Map dynamisch aus den Spalten erstellen */
+$sortMap = [];
+foreach ($columns as $key=>$meta) {
+  if (!empty($meta['sortable']) && !empty($meta['db'])) {
+    $sortMap[$key] = $meta['db'];
+  }
+}
+$allowedSort = array_keys($sortMap);
+
+/** Standard-Spalten (für „Standard“-Button im Picker) – nach Bedarf anpassen */
+$standardCols = ['name','street','zip','city','state','industry','website','email_general','phone_general','campaigns'];
+
+/** Sichtbare Spalten aus GET oder Defaults (Default: ALLE Spalten) */
+$visibleCols = array_values(array_unique(array_filter((array)($_GET['cols'] ?? []))));
+if (empty($visibleCols)) {
+  $defaultVisibleCols = array_keys($columns); // ALLE
+  $visibleCols = $defaultVisibleCols;
+}
+/** „name“ niemals ausblendbar (Sicherheit) */
+if (!in_array('name', $visibleCols, true)) { array_unshift($visibleCols, 'name'); }
+
+/** --- Optionen / Filter / Paging / Sortierung --- */
+$sort = $_GET['sort'] ?? 'name'; if (!in_array($sort, $allowedSort, true)) $sort='name';
 $dir  = strtolower($_GET['dir'] ?? 'asc'); $dir = $dir==='desc'?'DESC':'ASC';
 $page = max(1, (int)($_GET['page'] ?? 1));
 $per  = min(1000, max(10, (int)($_GET['per'] ?? 250)));
@@ -22,7 +150,7 @@ $has_phone = isset($_GET['has_phone']) ? 1 : 0;
 $campaign_id = isset($_GET['campaign_id']) ? (int)$_GET['campaign_id'] : 0; // für Filter
 $filter_in_campaign = ($_GET['in_campaign'] ?? '') === '1';
 
-// ---- Bulk-Aktion: ausgewählte Firmen einer Kampagne zuordnen ----
+/** --- Bulk-Aktion: ausgewählte Firmen einer Kampagne zuordnen --- */
 if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action']??'')==='bulk_add_companies_to_campaign'){
   if (!hash_equals($_SESSION['csrf'] ?? '', $_POST['csrf'] ?? '')) { flash('error','Ungültiges Formular (CSRF).'); header('Location: /public/companies.php'); exit; }
   $targetCampaign = (int)($_POST['target_campaign_id'] ?? 0);
@@ -46,14 +174,15 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action']??'')==='bulk_add_co
   header('Location: /public/companies.php?'.http_build_query($_GET)); exit;
 }
 
-// ---- Kampagnenliste für Filter/Dropdown ----
+/** --- Kampagnenliste für Filter/Dropdown --- */
 $campaigns = [];
 try { $campaigns = $pdo->query("SELECT id, name, status FROM campaigns ORDER BY name ASC")->fetchAll(); } catch(Throwable $e){}
 
-// ---- Query bauen ----
+/** --- Query bauen --- */
 $where=[]; $params=[];
 if ($q!==''){
-  $where[] = "(co.name LIKE :q OR co.city LIKE :q OR co.zip LIKE :q OR co.website LIKE :q OR co.email_general LIKE :q OR co.industry LIKE :q OR co.state LIKE :q OR co.street LIKE :q)";
+  // Suche erweitert um weitere Felder
+  $where[] = "(co.name LIKE :q OR co.city LIKE :q OR co.zip LIKE :q OR co.website LIKE :q OR co.email_general LIKE :q OR co.industry LIKE :q OR co.state LIKE :q OR co.street LIKE :q OR co.legal_form LIKE :q OR co.register_court LIKE :q OR co.register_number LIKE :q OR co.phone_general LIKE :q OR co.size_class LIKE :q OR co.external_id LIKE :q OR co.business_purpose LIKE :q)";
   $params[':q'] = "%$q%";
 }
 if ($city!==''){ $where[] = "co.city = :city"; $params[':city'] = $city; }
@@ -61,32 +190,25 @@ if ($has_email){ $where[] = "co.email_general IS NOT NULL AND co.email_general <
 if ($has_phone){ $where[] = "co.phone_general IS NOT NULL AND co.phone_general <> ''"; }
 if ($filter_in_campaign && $campaign_id>0){ $where[] = "EXISTS (SELECT 1 FROM campaign_companies cc WHERE cc.company_id=co.id AND cc.campaign_id=:cid)"; $params[':cid']=$campaign_id; }
 
-$sortMap = [
-  'name' => 'co.name',
-  'street' => 'co.street',
-  'city' => 'co.city',
-  'zip'  => 'co.zip',
-  'state'=> 'co.state',
-  'industry' => 'co.industry',
-  'website' => 'co.website',
-  'email_general' => 'co.email_general',
-  'phone_general' => 'co.phone_general',
-  'created_at' => 'co.created_at',
-  'updated_at' => 'co.updated_at',
-];
-$orderBy = $sortMap[$sort] . ' ' . $dir . ', co.id ASC';
+$orderBy = ($sortMap[$sort] ?? 'co.name') . ' ' . $dir . ', co.id ASC';
 
 $baseSQL = "FROM companies co";
 if ($where) $baseSQL .= ' WHERE '.implode(' AND ',$where);
 
 // Count total
-$total = 0; try { $stmt=$pdo->prepare('SELECT COUNT(*) '.$baseSQL); $stmt->execute($params); $total=(int)$stmt->fetchColumn(); } catch(Throwable $e){}
+$total = 0; try { $stmt=$pdo->prepare('SELECT COUNT(*) '.$baseSQL); 
+  foreach($params as $k=>$v){ $stmt->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR); }
+  $stmt->execute(); $total=(int)$stmt->fetchColumn(); 
+} catch(Throwable $e){}
 $pages = max(1, (int)ceil($total/$per)); $page = min($page,$pages); $offset = ($page-1)*$per;
 
 // Rows inkl. Kampagnennamen
 $rows=[]; try {
+  // Alle benötigten Felder selektieren (nicht nur die sichtbaren, um Umschalten ohne Reload der Daten zu ermöglichen)
   $sql = 'SELECT
             co.id, co.name, co.street, co.zip, co.city, co.state, co.industry,
+            co.business_purpose, co.legal_form, co.register_court, co.register_number,
+            co.employees, co.revenue, co.size_class, co.external_id,
             co.website, co.email_general, co.phone_general, co.created_at, co.updated_at,
             (SELECT GROUP_CONCAT(ca.name SEPARATOR ", ")
                FROM campaign_companies cc
@@ -94,17 +216,21 @@ $rows=[]; try {
               WHERE cc.company_id=co.id) AS campaigns
           '.$baseSQL.' ORDER BY '.$orderBy.' LIMIT :lim OFFSET :off';
   $stmt=$pdo->prepare($sql);
-  foreach($params as $k=>$v){ $stmt->bindValue($k,$v, PDO::PARAM_STR); }
+  foreach($params as $k=>$v){ $stmt->bindValue($k, $v, is_int($v) ? PDO::PARAM_INT : PDO::PARAM_STR); }
   $stmt->bindValue(':lim', $per, PDO::PARAM_INT);
   $stmt->bindValue(':off', $offset, PDO::PARAM_INT);
-  $stmt->execute(); $rows=$stmt->fetchAll();
+  $stmt->execute(); $rows=$stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch(Throwable $e){ $err=$e->getMessage(); }
 
 // Helper: Sortierlink
 function sort_link($key,$label){
+  global $sortMap;
   $curSort = $_GET['sort'] ?? 'name';
   $curDir  = strtolower($_GET['dir'] ?? 'asc');
   $nextDir = ($curSort===$key && $curDir==='asc') ? 'desc' : 'asc';
+  if (!isset($sortMap[$key])) {
+    return e($label); // nicht sortierbar
+  }
   $qs = $_GET; $qs['sort']=$key; $qs['dir']=$nextDir; $url='/public/companies.php?'.http_build_query($qs);
   $indicator = $curSort===$key ? ($curDir==='asc'?'▲':'▼') : '';
   return '<a href="'.e($url).'" class="link-underline link-underline-opacity-0">'.e($label).' '.e($indicator).'</a>';
@@ -119,11 +245,26 @@ function sort_link($key,$label){
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     body { padding-top: 56px; } /* Platz für fixed-top Navbar */
+    /* Headline der Tabelle */
     .table thead th {
-      position: sticky; top: 56px; z-index: 1; background: #f8f9fa; white-space: nowrap;
+      position: sticky;
+      top: 0;                 /* statt 56px */
+      z-index: 2;
+      background: #f8f9fa;
+      white-space: nowrap;
     }
+/* Neu hinzufügen */
+th.col-id, td.col-id { width: 90px; }  /* passe 90px nach Bedarf an */
+
+/* Optional: vertikales Scrollen im Tabellencontainer, damit sticky „oben“ Sinn hat */
+.table-responsive {
+  max-height: 75vh;
+  overflow-y: auto;
+}
+
     .table td { white-space: normal; word-break: break-word; }
     .td-narrow { max-width: 240px; }
+    .td-wide { max-width: 480px; }
     .company-cell .actions { font-size:.875rem; }
   </style>
 </head>
@@ -140,7 +281,7 @@ function sort_link($key,$label){
       <form class="row g-2 align-items-end" method="get">
         <div class="col-12 col-md-4">
           <label class="form-label">Suche</label>
-          <input type="text" name="q" class="form-control" value="<?= e($q) ?>" placeholder="Firma, Stadt, PLZ, Website, E-Mail, Branche, Straße, Bundesland">
+          <input type="text" name="q" class="form-control" value="<?= e($q) ?>" placeholder="Firma, Stadt, PLZ, Website, E-Mail, Branche, Straße, Bundesland, Rechtsform, Register…">
         </div>
         <div class="col-6 col-md-2">
           <label class="form-label">Stadt</label>
@@ -169,8 +310,8 @@ function sort_link($key,$label){
               <label class="form-label">Kampagne (Filter/Zuordnung)</label>
               <select name="campaign_id" id="campaign_select" class="form-select">
                 <option value="0">— keine Auswahl —</option>
-                <?php foreach($campaigns as $c): ?>
-                  <option value="<?= (int)$c['id'] ?>" <?= $campaign_id===$c['id']?'selected':'' ?>>#<?= (int)$c['id'] ?> · <?= e($c['name']) ?> (<?= e($c['status']) ?>)</option>
+                <?php foreach($campaigns as $c): $cid=(int)$c['id']; ?>
+                  <option value="<?= $cid ?>" <?= ((int)$campaign_id===$cid)?'selected':'' ?>>#<?= $cid ?> · <?= e($c['name']) ?> (<?= e($c['status']) ?>)</option>
                 <?php endforeach; ?>
               </select>
             </div>
@@ -186,6 +327,31 @@ function sort_link($key,$label){
             </div>
           </div>
         </div>
+
+        <!-- Spaltenauswahl (ausklappbar) -->
+        <div class="col-12 mt-3">
+          <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#colPicker" aria-expanded="false" aria-controls="colPicker">
+            Spalten auswählen
+          </button>
+        </div>
+        <div class="collapse mt-2" id="colPicker">
+          <div class="border rounded p-3 bg-light">
+            <div class="d-flex flex-wrap gap-3">
+              <?php foreach($columns as $key=>$meta): ?>
+                <div class="form-check">
+                  <input class="form-check-input colbox" type="checkbox" id="col_<?= e($key) ?>" name="cols[]" value="<?= e($key) ?>" <?= in_array($key,$visibleCols,true)?'checked':'' ?>>
+                  <label class="form-check-label" for="col_<?= e($key) ?>"><?= e($meta['label']) ?></label>
+                </div>
+              <?php endforeach; ?>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-outline-secondary" onclick="colsSelectAll(true)">Alle</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" onclick="colsSelectAll(false)">Keine</button>
+              <button type="button" class="btn btn-sm btn-outline-secondary" onclick="colsSelectDefault()">Standard</button>
+            </div>
+            <div class="form-text mt-1">„Firma“ bleibt aus Gründen der Bedienbarkeit immer sichtbar.</div>
+          </div>
+        </div>
       </form>
     </div>
   </div>
@@ -199,8 +365,8 @@ function sort_link($key,$label){
         <div class="d-flex align-items-center gap-2">
           <select name="target_campaign_id" class="form-select form-select-sm" style="width:auto">
             <option value="0">Zu Kampagne hinzufügen…</option>
-            <?php foreach($campaigns as $c): ?>
-              <option value="<?= (int)$c['id'] ?>" <?= ($campaign_id===$c['id'])?'selected':''; ?>>#<?= (int)$c['id'] ?> · <?= e($c['name']) ?></option>
+            <?php foreach($campaigns as $c): $cid=(int)$c['id']; ?>
+              <option value="<?= $cid ?>" <?= ((int)$campaign_id===$cid)?'selected':''; ?>>#<?= $cid ?> · <?= e($c['name']) ?></option>
             <?php endforeach; ?>
           </select>
           <button type="submit" class="btn btn-sm btn-outline-primary">Auswahl zuordnen</button>
@@ -217,39 +383,34 @@ function sort_link($key,$label){
           <thead class="table-light">
             <tr>
               <th style="width:1%"><input class="form-check-input" type="checkbox" id="checkall" onclick="setAll(this.checked)"></th>
-              <th><?= sort_link('name','Firma') ?></th>
-              <th><?= sort_link('street','Straße') ?></th>
-              <th><?= sort_link('zip','PLZ') ?></th>
-              <th><?= sort_link('city','Stadt') ?></th>
-              <th><?= sort_link('state','Bundesland') ?></th>
-              <th><?= sort_link('industry','Branche') ?></th>
-              <th class="td-narrow"><?= sort_link('website','Webseite') ?></th>
-              <th class="td-narrow"><?= sort_link('email_general','E-Mail (allg.)') ?></th>
-              <th><?= sort_link('phone_general','Telefon (allg.)') ?></th>
-              <th>Kampagnen</th>
+              <?php foreach($visibleCols as $key): 
+                $meta = $columns[$key] ?? null; if (!$meta) continue; ?>
+                <th class="<?= e($meta['th_class'] ?? '') ?>">
+                  <?= !empty($meta['sortable']) && !empty($meta['db']) ? sort_link($key, $meta['label']) : e($meta['label']) ?>
+                </th>
+              <?php endforeach; ?>
             </tr>
           </thead>
           <tbody>
             <?php if(empty($rows)): ?>
-              <tr><td colspan="11" class="text-muted">Keine Firmen gefunden.</td></tr>
+              <tr><td colspan="<?= 1 + count($visibleCols) ?>" class="text-muted">Keine Firmen gefunden.</td></tr>
             <?php else: foreach($rows as $r): ?>
               <tr>
                 <td><input class="form-check-input rowcheck" type="checkbox" name="selected[]" value="<?= (int)$r['id'] ?>"></td>
-                <td class="company-cell">
-                  <div class="fw-semibold"><?= e($r['name'] ?: '—') ?></div>
-                  <div class="actions">
-                    <a href="/public/company_edit.php?id=<?= (int)$r['id'] ?>" class="link-secondary link-underline-opacity-0">Bearbeiten</a>
-                  </div>
-                </td>
-                <td><?= e($r['street'] ?: '—') ?></td>
-                <td><?= e($r['zip'] ?: '—') ?></td>
-                <td><?= e($r['city'] ?: '—') ?></td>
-                <td><?= e($r['state'] ?: '—') ?></td>
-                <td><?= e($r['industry'] ?: '—') ?></td>
-                <td class="td-narrow"><?php if(!empty($r['website'])): ?><a href="<?= e($r['website']) ?>" target="_blank" rel="noopener noreferrer"><?= e($r['website']) ?></a><?php else: ?>—<?php endif; ?></td>
-                <td class="td-narrow"><?php if(!empty($r['email_general'])): ?><a href="mailto:<?= e($r['email_general']) ?>"><?= e($r['email_general']) ?></a><?php else: ?>—<?php endif; ?></td>
-                <td><?= e($r['phone_general'] ?: '—') ?></td>
-                <td><?= e($r['campaigns'] ?: '—') ?></td>
+                <?php foreach($visibleCols as $key):
+                  $meta = $columns[$key] ?? null; if (!$meta) continue;
+                  $tdClass = $meta['td_class'] ?? ''; ?>
+                  <td class="<?= e($tdClass) ?>">
+                    <?php
+                      if (isset($meta['render']) && is_callable($meta['render'])) {
+                        echo $meta['render']($r);
+                      } else {
+                        $val = $r[$key] ?? null;
+                        echo e($val!==null && $val!=='' ? $val : '—');
+                      }
+                    ?>
+                  </td>
+                <?php endforeach; ?>
               </tr>
             <?php endforeach; endif; ?>
           </tbody>
@@ -277,6 +438,24 @@ function setAll(checked){
   document.querySelectorAll('.rowcheck').forEach(cb => cb.checked = checked);
   const master = document.getElementById('checkall');
   if (master) master.checked = checked;
+}
+
+// Spaltenpicker-Utils
+const defaultCols = <?= json_encode(array_values($standardCols)) ?>;
+function colsSelectAll(all){
+  document.querySelectorAll('#colPicker .colbox').forEach(cb => cb.checked = !!all);
+  // Name nie deaktivieren:
+  const nameBox = document.getElementById('col_name');
+  if (nameBox) nameBox.checked = true;
+}
+function colsSelectDefault(){
+  document.querySelectorAll('#colPicker .colbox').forEach(cb => cb.checked = false);
+  defaultCols.forEach(k => {
+    const el = document.getElementById('col_' + k);
+    if (el) el.checked = true;
+  });
+  const nameBox = document.getElementById('col_name');
+  if (nameBox) nameBox.checked = true;
 }
 </script>
 </body>
