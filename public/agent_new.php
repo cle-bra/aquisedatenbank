@@ -42,7 +42,12 @@ function normalize_mobile(string $raw): string {
 }
 
 function fetch_campaigns(PDO $pdo): array {
-  $stmt = $pdo->query("SELECT kampagne_id, name FROM ab_kampagnen WHERE status IN ('geplant','aktiv') ORDER BY name");
+  // Lies aus campaigns und mappe Spaltennamen auf die bisher verwendeten Keys
+  $sql = "SELECT id AS kampagne_id, name
+          FROM campaigns
+          WHERE status IN ('planning','active')   -- ggf. anpassen
+          ORDER BY name";
+  $stmt = $pdo->query($sql);
   return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
 
