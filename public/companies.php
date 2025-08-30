@@ -271,7 +271,7 @@ function sort_link($key,$label){
   <title>Firmen · Aquise Backend</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    body { padding-top: 56px; } /* Platz für fixed-top Navbar */
+
     /* Headline der Tabelle */
     .table thead th {
       position: sticky;
