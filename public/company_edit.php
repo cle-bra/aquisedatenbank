@@ -1,5 +1,6 @@
 <?php
 // public/company_edit.php – Firma komplett bearbeiten + verknüpfte Personen + Firmen-Bilder (Mehrfach-Upload)
+// + größere Thumbnails + Doppelklick-Viewer + Personen-Avatare (falls vorhanden)
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 if (!isset($_SESSION['user'])) { header('Location: /login.php'); exit; }
 require_once '../includes/mysql.php'; // $pdo
@@ -24,6 +25,27 @@ function parse_dt_local_or_null($s){
   $ts = strtotime($s);
   return $ts? date('Y-m-d H:i:s',$ts) : null;
 }
+
+// Erzeugt eine korrekte Web-URL auch wenn die App unter /public läuft
+function asset_path($webPath){
+  $webPath = (string)$webPath;
+  if ($webPath === '') return '';
+  // absolute URLs oder data:-URIs unverändert lassen
+  if (preg_match('~^(?:https?:)?//|^data:~i', $webPath)) return $webPath;
+
+  // Basis = Verzeichnis der aktuell aufgerufenen Datei (z. B. /public)
+  $base = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
+  if ($base === '/') $base = '';
+
+  // Sicherstellen, dass der Pfad mit / beginnt
+  if ($webPath[0] !== '/') $webPath = '/'.$webPath;
+
+  // Doppeltes Präfix vermeiden (falls already /public/uploads/…)
+  if ($base && strpos($webPath, $base.'/') === 0) return $webPath;
+
+  return $base.$webPath;
+}
+
 
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 if ($id<=0){ http_response_code(400); echo 'Ungültige ID'; exit; }
@@ -101,8 +123,7 @@ if($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action']??'')==='save_company
 }
 
 /* -----------------------------------------------------------
-   Bilder – Optionen & Pfade
-   (Mehrfach-Upload, keine Auto-Primär-Logik)
+   Bilder – Optionen & Pfade (Mehrfach-Upload, kein Auto-Primär)
 ----------------------------------------------------------- */
 $imagesEnabled = false;
 try { $pdo->query("SELECT 1 FROM company_images LIMIT 1"); $imagesEnabled = true; } catch(Throwable $e){}
@@ -121,7 +142,6 @@ if($imagesEnabled && $_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action']??'
     $MAX_BYTES    = 16 * 1024 * 1024;
 
     $imgSuccess=0; $imgFail=0;
-    // Sort-Basis
     $baseSort = 0;
     try { $baseSort = (int)$pdo->query("SELECT COALESCE(MAX(sort_order),0) FROM company_images WHERE company_id=".$id)->fetchColumn(); } catch(Throwable $e){ $baseSort=0; }
     $nextSort = $baseSort + 10;
@@ -239,16 +259,39 @@ if($imagesEnabled && $_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action']??'
 }
 
 /* -----------------------------------------------------------
-   Personen der Firma laden
+   Personen der Firma laden (+ Avatar-Pfad aus person_images, falls vorhanden)
 ----------------------------------------------------------- */
-$people=[]; try{
-  $stmt=$pdo->prepare('SELECT id, salutation, first_name, last_name, position, email_personal, phone_direct, phone_ext FROM contacts WHERE company_id=:id ORDER BY last_name, first_name');
+$personImagesEnabled = false;
+try { $pdo->query("SELECT 1 FROM person_images LIMIT 1"); $personImagesEnabled = true; } catch(Throwable $e){}
+
+$people=[];
+try{
+  if ($personImagesEnabled) {
+    $stmt=$pdo->prepare('
+      SELECT c.id, c.salutation, c.first_name, c.last_name, c.position, c.email_personal, c.phone_direct, c.phone_ext,
+             (SELECT pi.file_path
+                FROM person_images pi
+               WHERE pi.contact_id=c.id
+               ORDER BY pi.is_primary DESC, pi.sort_order ASC, pi.id ASC
+               LIMIT 1) AS avatar_path
+      FROM contacts c
+      WHERE c.company_id=:id
+      ORDER BY c.last_name, c.first_name
+    ');
+  } else {
+    $stmt=$pdo->prepare('
+      SELECT id, salutation, first_name, last_name, position, email_personal, phone_direct, phone_ext
+      FROM contacts
+      WHERE company_id=:id
+      ORDER BY last_name, first_name
+    ');
+  }
   $stmt->execute([':id'=>$id]);
   $people=$stmt->fetchAll(PDO::FETCH_ASSOC);
 }catch(Throwable $e){}
 
 /* -----------------------------------------------------------
-   Bilder laden
+   Firmen-Bilder laden
 ----------------------------------------------------------- */
 $images=[]; $hasImages=false;
 if ($imagesEnabled){
@@ -267,10 +310,13 @@ if ($imagesEnabled){
   <title>Firma bearbeiten · Aquise Backend</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    .img-thumb { width: 120px; height: 90px; object-fit: cover; }
+    /* Größere Thumbs + visueller Hinweis „zoomen“ */
+    .img-thumb { width: 200px; height: 150px; object-fit: cover; cursor: zoom-in; }
     .badge-primary-flag { background:#0d6efd; }
     .img-meta-grid { display:grid; grid-template-columns: 1fr 1fr 120px; gap:.5rem; }
     .img-meta-grid .file-label { grid-column: 1 / -1; font-size:.875rem; color:#6c757d; }
+    /* Personen-Avatar */
+    .avatar-sm { width: 36px; height: 36px; object-fit: cover; border-radius: 50%; cursor: zoom-in; }
   </style>
 </head>
 <body class="bg-light d-flex flex-column min-vh-100">
@@ -414,7 +460,7 @@ if ($imagesEnabled){
                 <label class="form-label">Bilder (Mehrfachauswahl)</label>
                 <input type="file" id="imagesInput" name="images[]" class="form-control" accept=".jpg,.jpeg,.png,.webp" multiple>
                 <div id="imageMetaList" class="mt-2"></div>
-                <div class="form-text">Max. 16 MB pro Datei. Erlaubt: JPG/PNG/WebP.</div>
+                <div class="form-text">Max. 16 MB pro Datei. Erlaubt: JPG/PNG/WebP. <span class="text-muted">Tipp: Doppelklick auf ein Bild vergrößert es.</span></div>
               </div>
               <div class="col-12">
                 <button class="btn btn-sm btn-outline-primary">Hochladen</button>
@@ -429,7 +475,17 @@ if ($imagesEnabled){
                 <div class="col-12 col-md-6 col-lg-4">
                   <div class="border rounded p-2 h-100">
                     <div class="d-flex align-items-start gap-2">
-                      <img src="<?= e($img['file_path']) ?>" alt="<?= e($img['alt_text'] ?? '') ?>" class="img-thumb rounded">
+                      <!-- Doppelklick-Viewer: data-enlarge + optional data-title -->
+<img
+  src="<?= e(asset_path($img['file_path'])) ?>"
+  alt="<?= e($img['alt_text'] ?? ($img['title'] ?? '')) ?>"
+  class="img-thumb rounded"
+  data-enlarge
+  data-full="<?= e(asset_path($img['file_path'])) ?>"
+  data-title="<?= e($img['title'] ?? '') ?>"
+>
+
+
                       <div class="flex-grow-1">
                         <div class="d-flex justify-content-between">
                           <div class="small text-muted">#<?= (int)$img['id'] ?> · <?= e(date('d.m.Y H:i', strtotime($img['created_at']))) ?></div>
@@ -475,7 +531,7 @@ if ($imagesEnabled){
       </div>
     </div>
 
-    <!-- Rechte Spalte: Personen -->
+    <!-- Rechte Spalte: Personen (mit Avatar, wenn vorhanden) -->
     <div class="col-12 col-xl-5">
       <div class="card shadow-sm h-100">
         <div class="card-body">
@@ -487,6 +543,7 @@ if ($imagesEnabled){
             <table class="table table-sm align-middle">
               <thead>
                 <tr>
+                  <th>Bild</th>
                   <th>Name</th>
                   <th>Position</th>
                   <th>E‑Mail</th>
@@ -499,7 +556,22 @@ if ($imagesEnabled){
                   <tr><td colspan="5" class="text-muted">Noch keine Personen erfasst.</td></tr>
                 <?php else: foreach($people as $p): ?>
                   <tr>
-                    <td><?= e(trim(($p['salutation']? $p['salutation'].' ':'').($p['first_name'] ?? '').' '.($p['last_name'] ?? ''))) ?: '—' ?></td>
+<td>
+  <?php if (!empty($p['avatar_path'])): ?>
+    <img
+      src="<?= e(asset_path($p['avatar_path'])) ?>"
+      alt="<?= e(trim(($p['first_name'] ?? '').' '.($p['last_name'] ?? ''))) ?>"
+      class="avatar-sm me-2"
+      data-enlarge
+      data-full="<?= e(asset_path($p['avatar_path'])) ?>"
+    >
+  <?php endif; ?>
+  </td>
+  <td>
+  <?= e(trim(($p['salutation']? $p['salutation'].' ':'').($p['first_name'] ?? '').' '.($p['last_name'] ?? ''))) ?: '—' ?>
+</td>
+
+
                     <td><?= e($p['position'] ?: '—') ?></td>
                     <td><?php if(!empty($p['email_personal'])): ?><a href="mailto:<?= e($p['email_personal']) ?>"><?= e($p['email_personal']) ?></a><?php else: ?>—<?php endif; ?></td>
                     <td><?= e($p['phone_direct'] ?: ($p['phone_ext'] ?: '—')) ?></td>
@@ -515,6 +587,19 @@ if ($imagesEnabled){
   </div>
 
 </main>
+
+<!-- Bild-Viewer (Bootstrap Modal) -->
+<div class="modal fade" id="imageViewer" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-xl">
+    <div class="modal-content">
+      <div class="modal-body p-0 text-center">
+        <img id="imageViewerImg" class="img-fluid" alt="">
+        <div id="imageViewerCaption" class="p-2 small text-muted text-start"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <footer class="mt-auto py-3 bg-white border-top"><div class="container small text-muted">© <?= date('Y') ?> KNX‑Trainingcenter · Aquise Backend</div></footer>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
@@ -538,6 +623,28 @@ if ($imagesEnabled){
       });
     });
   }
+
+  // Doppelklick-Viewer für alle Bilder mit data-enlarge
+  (function(){
+    const modalEl = document.getElementById('imageViewer');
+    const imgEl   = document.getElementById('imageViewerImg');
+    const capEl   = document.getElementById('imageViewerCaption');
+    let modal;
+    function openViewer(src, caption, altText){
+      imgEl.src = src;
+      imgEl.alt = altText || caption || '';
+      capEl.textContent = caption || '';
+      if (!modal) modal = new bootstrap.Modal(modalEl);
+      modal.show();
+    }
+    document.addEventListener('dblclick', function(ev){
+      const img = ev.target.closest('img[data-enlarge]');
+      if (!img) return;
+      const src = img.getAttribute('data-full') || img.currentSrc || img.src;
+      const cap = img.getAttribute('data-title') || img.getAttribute('alt') || '';
+      openViewer(src, cap, img.getAttribute('alt') || '');
+    });
+  })();
 </script>
 </body>
 </html>

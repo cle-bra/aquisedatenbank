@@ -180,11 +180,38 @@ try { $campaigns = $pdo->query("SELECT id, name, status FROM campaigns ORDER BY 
 
 /** --- Query bauen --- */
 $where=[]; $params=[];
-if ($q!==''){
-  // Suche erweitert um weitere Felder
-  $where[] = "(co.name LIKE :q OR co.city LIKE :q OR co.zip LIKE :q OR co.website LIKE :q OR co.email_general LIKE :q OR co.industry LIKE :q OR co.state LIKE :q OR co.street LIKE :q OR co.legal_form LIKE :q OR co.register_court LIKE :q OR co.register_number LIKE :q OR co.phone_general LIKE :q OR co.size_class LIKE :q OR co.external_id LIKE :q OR co.business_purpose LIKE :q)";
-  $params[':q'] = "%$q%";
+
+if ($q !== '') {
+  // Jede Spalte bekommt einen eigenen Platzhalter (:q0, :q1, ...)
+  $searchCols = [
+    'co.name','co.city','co.zip','co.website','co.email_general','co.industry','co.state','co.street',
+    'co.legal_form','co.register_court','co.register_number','co.phone_general','co.size_class',
+    'co.external_id','co.business_purpose'
+  ];
+  $parts = [];
+  foreach ($searchCols as $i => $col) {
+    $ph = ":q{$i}";
+    $parts[] = "$col LIKE $ph";
+    $params[$ph] = "%{$q}%";
+  }
+  $where[] = '(' . implode(' OR ', $parts) . ')';
 }
+
+if ($city !== '') {
+  $where[] = "co.city = :city";
+  $params[':city'] = $city;
+}
+if ($has_email) {
+  $where[] = "co.email_general IS NOT NULL AND co.email_general <> ''";
+}
+if ($has_phone) {
+  $where[] = "co.phone_general IS NOT NULL AND co.phone_general <> ''";
+}
+if ($filter_in_campaign && $campaign_id > 0) {
+  $where[] = "EXISTS (SELECT 1 FROM campaign_companies cc WHERE cc.company_id=co.id AND cc.campaign_id=:cid)";
+  $params[':cid'] = $campaign_id;
+}
+
 if ($city!==''){ $where[] = "co.city = :city"; $params[':city'] = $city; }
 if ($has_email){ $where[] = "co.email_general IS NOT NULL AND co.email_general <> ''"; }
 if ($has_phone){ $where[] = "co.phone_general IS NOT NULL AND co.phone_general <> ''"; }
