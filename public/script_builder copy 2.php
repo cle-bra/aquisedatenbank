@@ -1,7 +1,6 @@
 <?php
-// public/script_builder.php – Script-Builder (Flows-basiert) mit Baumdiagramm & PDF-Export
-// Nutzt: flows, flow_nodes, (optional) questions, scripts, question_options
-// Aufruf: /public/script_builder.php
+// public/script_builder.php – Script-Builder für Dialogbäume
+// Aufruf: /public/script_builder.php?campaign_id=123
 if (session_status() === PHP_SESSION_NONE) { session_start(); }
 if (!isset($_SESSION['user'])) { header('Location: /login.php'); exit; }
 
@@ -31,28 +30,18 @@ $scriptsStmt->execute([':cid'=>$campaignId]); $scripts = $scriptsStmt->fetchAll(
 $graphScriptId = (int)($_GET['script_id'] ?? 0);
 if ($graphScriptId<=0) { $graphScriptId = $activeScript['id'] ?? ((int)($scripts[0]['id'] ?? 0)); }
 
-// --------- API: GET graph_json (Flows/Nodes + Branching via question_options) ----------
+// --------- API: GET graph_json (flows/flow_nodes) ----------
 if (($_GET['action'] ?? '') === 'graph_json') {
   header('Content-Type: application/json; charset=utf-8');
 
-  // 1) Aktive Flows holen (optional Filter: ?flow_id=1,2)
-  $flowFilter = trim((string)($_GET['flow_id'] ?? ''));
-  if ($flowFilter !== '') {
-    $ids = array_values(array_filter(array_map('intval', preg_split('/[\s,;]+/', $flowFilter))));
-    if ($ids) {
-      $in = implode(',', array_fill(0,count($ids),'?'));
-      $stf = $pdo->prepare("SELECT id, code, name, description, active FROM flows WHERE active=1 AND id IN ($in) ORDER BY id");
-      $stf->execute($ids);
-      $flows = $stf->fetchAll(PDO::FETCH_ASSOC);
-    }
+  // 1) Alle aktiven Flows holen
+  $flows = $pdo->query("SELECT id, code, name, description, active FROM flows WHERE active=1 ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
+  if (!$flows) {
+    echo json_encode(['root' => 'ROOT', 'nodes' => [['data'=>['id'=>'ROOT','label'=>'Keine aktiven Flows','type'=>'INFO']]], 'edges' => []]);
+    exit;
   }
-  if (empty($flows)) {
-    $flows = $pdo->query("SELECT id, code, name, description, active FROM flows WHERE active=1 ORDER BY id")
-                  ->fetchAll(PDO::FETCH_ASSOC);
-  }
-  if (!$flows) { echo json_encode(['root'=>'ROOT','nodes'=>[['data'=>['id'=>'ROOT','label'=>'Keine aktiven Flows','type'=>'INFO']]],'edges'=>[]]); exit; }
 
-  // 2) flow_nodes je Flow laden
+  // 2) Alle flow_nodes zu diesen Flows
   $flowIds = array_map(fn($f)=>(int)$f['id'], $flows);
   $in = implode(',', array_fill(0,count($flowIds),'?'));
   $st = $pdo->prepare("SELECT id, flow_id, kind, script_id, question_id, sort_order
@@ -62,125 +51,109 @@ if (($_GET['action'] ?? '') === 'graph_json') {
   $st->execute($flowIds);
   $fnodes = $st->fetchAll(PDO::FETCH_ASSOC);
 
-  // 3) Titles aus scripts/questions (best effort)
+  // 3) Optional: Titel für Scripts/Questions (nur wenn Tabellen existieren)
   $scriptTitles = []; $questionTitles = [];
-  // scripts
-  $sids = array_values(array_unique(array_map(fn($n)=>(int)$n['script_id'], array_filter($fnodes, fn($n)=>$n['kind']==='script' && !empty($n['script_id'])))));
-  if ($sids) {
-    try {
+  try {
+    $sids = array_values(array_unique(array_map(fn($n)=>(int)$n['script_id'], array_filter($fnodes, fn($n)=>$n['kind']==='script' && !empty($n['script_id'])))));
+    if ($sids) {
       $ins = implode(',', array_fill(0,count($sids),'?'));
+      // Falls bei dir 'scripts' anders heißt: hier anpassen
       $ss = $pdo->prepare("SELECT id, name FROM scripts WHERE id IN ($ins)");
       $ss->execute($sids);
       foreach($ss->fetchAll(PDO::FETCH_ASSOC) as $r){ $scriptTitles[(int)$r['id']] = $r['name']; }
-    } catch (Throwable $e) { /* scripts evtl. nicht vorhanden */ }
-  }
-  // questions
-  $qids = array_values(array_unique(array_map(fn($n)=>(int)$n['question_id'], array_filter($fnodes, fn($n)=>$n['kind']==='question' && !empty($n['question_id'])))));
-  if ($qids) {
-    try {
+    }
+  } catch (Throwable $e) { /* Tabelle scripts nicht vorhanden -> Fallback-Titel */ }
+
+  try {
+    $qids = array_values(array_unique(array_map(fn($n)=>(int)$n['question_id'], array_filter($fnodes, fn($n)=>$n['kind']==='question' && !empty($n['question_id'])))));
+    if ($qids) {
       $inq = implode(',', array_fill(0,count($qids),'?'));
+      // Falls bei dir 'questions' anders heißt: hier anpassen
       $qq = $pdo->prepare("SELECT id, title FROM questions WHERE id IN ($inq)");
       $qq->execute($qids);
       foreach($qq->fetchAll(PDO::FETCH_ASSOC) as $r){ $questionTitles[(int)$r['id']] = $r['title']; }
-    } catch (Throwable $e) { /* questions evtl. nicht vorhanden */ }
-  }
+    }
+  } catch (Throwable $e) { /* Tabelle questions nicht vorhanden -> Fallback-Titel */ }
 
-  // 4) Options (Branching) zu Fragen
-  $optionsByQ = [];
-  if ($qids) {
-    try {
-      $inq = implode(',', array_fill(0,count($qids),'?'));
-      $qo = $pdo->prepare("SELECT id, question_id, label, sort_order, leads_to_flow_id, leads_to_flow_node_id
-                            FROM question_options
-                            WHERE question_id IN ($inq)
-                            ORDER BY question_id, sort_order, id");
-      $qo->execute($qids);
-      while($o = $qo->fetch(PDO::FETCH_ASSOC)) { $optionsByQ[(int)$o['question_id']][] = $o; }
-    } catch (Throwable $e) { /* keine Optionen -> kein Branching */ }
-  }
-
-  // 5) Datenaufbereitung
+  // 4) Cytoscape-Elements aufbauen
   $nodes = [];
   $edges = [];
-  $nodes[] = ['data'=>['id'=>'ROOT','label'=>'Flows (Übersicht)','type'=>'ROOT']];
 
-  // Gruppierung & erster Schritt je Flow
+  // Virtueller ROOT
+  $nodes[] = ['data'=>['id'=>'ROOT', 'label'=>'Flows (Übersicht)', 'type'=>'ROOT']];
+
+  // Indices, um pro Flow Ketten zu bauen
   $byFlow = [];
-  $firstStepOfFlow = [];
-  foreach ($fnodes as $n) {
-    $fid = (int)$n['flow_id'];
-    $byFlow[$fid][] = $n;
-    if (!isset($firstStepOfFlow[$fid])) $firstStepOfFlow[$fid] = $n; // Dank ORDER BY sort_order,id
-  }
+  foreach ($fnodes as $n) { $byFlow[(int)$n['flow_id']][] = $n; }
 
   foreach ($flows as $f) {
     $fid = (int)$f['id'];
     $flowNodeId = 'F'.$fid;
-    $flowLabel = ($f['name'] ?: 'Flow #'.$fid);
-    $nodes[] = ['data'=>['id'=>$flowNodeId,'label'=>$flowLabel,'type'=>'FLOW']];
-    $edges[] = ['data'=>['id'=>'root_to_'.$flowNodeId,'source'=>'ROOT','target'=>$flowNodeId,'label'=>'']];
+    $flowLabel = ($f['name'] ?: ('Flow #'.$fid));
+    $nodes[] = ['data'=>['id'=>$flowNodeId, 'label'=>$flowLabel, 'type'=>'FLOW']];
+    $edges[] = ['data'=>['id'=>'root_to_'.$flowNodeId, 'source'=>'ROOT', 'target'=>$flowNodeId, 'label'=>'']];
 
     $chain = $byFlow[$fid] ?? [];
     $prevId = null;
     foreach ($chain as $step) {
       $sid = 'FN'.$step['id'];
+      // Label bestimmen
       if ($step['kind'] === 'script') {
-        $lbl = !empty($step['script_id']) ? ($scriptTitles[(int)$step['script_id']] ?? ('Script #'.$step['script_id'])) : 'Script';
+        $lbl = 'SCRIPT';
+        if (!empty($step['script_id'])) {
+          $lbl = ($scriptTitles[(int)$step['script_id']] ?? ('Script #'.$step['script_id']));
+        }
         $type = 'SCRIPT';
       } else { // question
-        $lbl = !empty($step['question_id']) ? ($questionTitles[(int)$step['question_id']] ?? ('Frage #'.$step['question_id'])) : 'Frage';
+        $lbl = 'QUESTION';
+        if (!empty($step['question_id'])) {
+          $lbl = ($questionTitles[(int)$step['question_id']] ?? ('Question #'.$step['question_id']));
+        }
         $type = 'QUESTION';
       }
-      $nodes[] = ['data'=>['id'=>$sid,'label'=>$lbl,'type'=>$type]];
+      $lbl = $lbl . '  (' . strtoupper($step['kind']) . ')';
 
-      // lineare Kette
+      $nodes[] = ['data'=>[
+        'id'    => $sid,
+        'label' => $lbl,
+        'type'  => $type
+      ]];
+
+      // Kette: Flow -> erster Step, danach Step -> Step
       if ($prevId === null) {
-        $edges[] = ['data'=>['id'=>'F'.$fid.'_to_'.$sid,'source'=>$flowNodeId,'target'=>$sid,'label'=>'']];
+        $edges[] = ['data'=>['id'=>'F'.$fid.'_to_'.$sid, 'source'=>$flowNodeId, 'target'=>$sid, 'label'=>'']];
       } else {
-        $edges[] = ['data'=>['id'=>$prevId.'_to_'.$sid,'source'=>$prevId,'target'=>$sid,'label'=>'→']];
+        $edges[] = ['data'=>['id'=>$prevId.'_to_'.$sid, 'source'=>$prevId, 'target'=>$sid, 'label'=>'→']];
       }
       $prevId = $sid;
-
-      // Branches von Questions
-      if ($step['kind'] === 'question' && !empty($step['question_id']) && !empty($optionsByQ[(int)$step['question_id']] ?? [])) {
-        foreach ($optionsByQ[(int)$step['question_id']] as $opt) {
-          $label = trim((string)$opt['label']);
-          $targetId = null;
-          if (!empty($opt['leads_to_flow_node_id'])) {
-            $targetId = 'FN'.((int)$opt['leads_to_flow_node_id']);
-          } elseif (!empty($opt['leads_to_flow_id'])) {
-            $toF = (int)$opt['leads_to_flow_id'];
-            if (!empty($firstStepOfFlow[$toF])) {
-              $targetId = 'FN'.((int)$firstStepOfFlow[$toF]['id']);
-            } else {
-              $targetId = 'F'.$toF; // Fallback
-            }
-          }
-          if ($targetId) {
-            $edges[] = ['data'=>[
-              'id' => 'opt_'.$opt['id'],
-              'source' => $sid,
-              'target' => $targetId,
-              'label' => $label
-            ]];
-          }
-        }
-      }
     }
   }
 
-  // 6) Optional: Nur erreichbare ab ROOT
-  $filter = (int)($_GET['reachable_only'] ?? 1) === 1;
-  if ($filter) {
-    $adj = [];
-    foreach ($edges as $e) { $adj[$e['data']['source']][] = $e['data']['target']; }
-    $reach = [];$q=['ROOT'];
-    while($q){ $u=array_shift($q); if(isset($reach[$u])) continue; $reach[$u]=true; foreach($adj[$u]??[] as $v){ if(!isset($reach[$v])) $q[]=$v; } }
-    $nodes = array_values(array_filter($nodes, fn($n)=> isset($reach[$n['data']['id']])));
-    $edges = array_values(array_filter($edges, fn($e)=> isset($reach[$e['data']['source']]) && isset($reach[$e['data']['target']])));
-  }
+  echo json_encode(['root'=>'ROOT', 'nodes'=>$nodes, 'edges'=>$edges]);
+  exit;
+}
 
-  echo json_encode(['root'=>'ROOT','nodes'=>$nodes,'edges'=>$edges]);
+// --------- API: POST update_node (AJAX/Modal) ----------
+if (($_GET['action'] ?? '') === 'update_node' && $_SERVER['REQUEST_METHOD']==='POST') {
+  header('Content-Type: application/json; charset=utf-8');
+  if (!hash_equals($_SESSION['csrf'] ?? '', $_POST['csrf'] ?? '')) { http_response_code(400); echo json_encode(['ok'=>false,'error'=>'CSRF']); exit; }
+  try {
+    $nid = (int)($_POST['id'] ?? 0);
+    $kind = $_POST['kind'] ?? 'question';
+    if (!in_array($kind,['message','question','action'],true)) $kind='question';
+    $title = trim((string)($_POST['title'] ?? ''));
+    $body  = trim((string)($_POST['body'] ?? ''));
+    $is_terminal = isset($_POST['is_terminal']) ? 1 : 0;
+    $next_default = (int)($_POST['next_default'] ?? 0);
+    $sort_order = (int)($_POST['sort_order'] ?? 0);
+
+    if ($nid<=0) throw new RuntimeException('Node-ID fehlt.');
+    $st = $pdo->prepare("UPDATE script_nodes SET kind=:k, title=:t, body=:b, is_terminal=:term, next_default=:nd, sort_order=:so WHERE id=:nid");
+    $ok = $st->execute([':k'=>$kind, ':t'=>$title, ':b'=>$body, ':term'=>$is_terminal, ':nd'=>($next_default?:null), ':so'=>$sort_order, ':nid'=>$nid]);
+    echo json_encode(['ok'=>$ok]);
+  } catch (Throwable $e) {
+    echo json_encode(['ok'=>false,'error'=>$e->getMessage()]);
+  }
   exit;
 }
 
@@ -196,7 +169,7 @@ if (($_GET['action'] ?? '') === 'export_pdf' && $_SERVER['REQUEST_METHOD']==='PO
   $tmp = sys_get_temp_dir().'/tree_'.time().'.png';
   file_put_contents($tmp, $bin);
 
-  // FPDF laden
+  // FPDF nutzen (muss vorhanden sein)
   if (!class_exists('FPDF')) {
     $fpdfA = __DIR__.'/fpdf186/fpdf.php';
     if (file_exists($fpdfA)) { require_once $fpdfA; }
@@ -219,7 +192,6 @@ if (($_GET['action'] ?? '') === 'export_pdf' && $_SERVER['REQUEST_METHOD']==='PO
   echo json_encode(['ok'=>true,'path'=>basename($out)]);
   exit;
 }
-//-------------------------------------------------------
 
 // --------- POST: klassische Aktionen (aus deinem Original) ----------
 if ($_SERVER['REQUEST_METHOD']==='POST' && !isset($_GET['action'])) {
@@ -361,7 +333,6 @@ function node_caption($n){
   if ((int)$n['is_terminal']===1) $p .= ' · [terminal]';
   return $p;
 }
-// ---------- UI ----------
 ?>
 
 <!doctype html>
@@ -633,101 +604,155 @@ function node_caption($n){
     </div>
 
   </div>
-  <?php if($m=flash('success')): ?><div class="alert alert-success"><?= e($m) ?></div><?php endif; ?>
-  <?php if($m=flash('error')): ?><div class="alert alert-danger"><?= e($m) ?></div><?php endif; ?>
-
-  <div class="row g-3">
-    <div class="col-12 col-xxl-4">
-      <div class="card shadow-sm">
-        <div class="card-body">
-          <h1 class="h6">Flows (aktiv)</h1>
-          <?php
-          // einfache Übersicht
-          $flows = $pdo->query("SELECT id, code, name, description, active FROM flows WHERE active=1 ORDER BY id")->fetchAll(PDO::FETCH_ASSOC);
-          if (!$flows): ?>
-            <div class="text-muted">Keine aktiven Flows.</div>
-          <?php else: ?>
-          <div class="table-responsive">
-            <table class="table table-sm align-middle">
-              <thead class="table-light"><tr><th>ID</th><th>Name</th><th>Code</th></tr></thead>
-              <tbody>
-              <?php foreach($flows as $f): ?>
-                <tr>
-                  <td class="mono">#<?= (int)$f['id'] ?></td>
-                  <td><?= e($f['name'] ?: '-') ?></td>
-                  <td class="text-muted small"><?= e($f['code'] ?: '-') ?></td>
-                </tr>
-              <?php endforeach; ?>
-              </tbody>
-            </table>
-          </div>
-          <?php endif; ?>
+  <!-- Full-width Graph unten -->
+<div id="graph-wrap" class="container-fluid">
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h2 class="h6 m-0">Baumdiagramm<?= $graphScriptId? ' · Script #'.(int)$graphScriptId : '' ?></h2>
+        <div class="toolbar">
+          <button id="btn-relayout" class="btn btn-sm btn-outline-secondary">Neu anordnen</button>
+          <button id="btn-export-png" class="btn btn-sm btn-outline-secondary">PNG</button>
+          <form id="pdfForm" class="d-inline" method="post" action="?action=export_pdf&campaign_id=<?= (int)$campaignId ?>&script_id=<?= (int)$graphScriptId ?>">
+            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="png_base64" id="png_base64">
+            <button id="btn-export-pdf" type="button" class="btn btn-sm btn-outline-secondary">PDF</button>
+          </form>
         </div>
       </div>
-    </div>
 
-    <div class="col-12 col-xxl-8">
-      <div class="card shadow-sm">
-        <div class="card-body">
-          <form class="row g-2 align-items-end" method="get">
-            <div class="col-12 col-md-8">
-              <label class="form-label">Nur bestimmte Flow-IDs (optional, Komma-getrennt)</label>
-              <input type="text" name="flow_id" value="<?= e($_GET['flow_id'] ?? '') ?>" class="form-control" placeholder="z.B. 1,2,3">
-            </div>
-            <div class="col-6 col-md-2 form-check">
-              <input class="form-check-input" type="checkbox" id="reachableOnly" name="reachable_only" value="1" <?= (!isset($_GET['reachable_only']) || $_GET['reachable_only']=='1')?'checked':'' ?>>
-              <label class="form-check-label" for="reachableOnly">Nur erreichbare</label>
-            </div>
-            <div class="col-6 col-md-2 d-grid">
-              <button class="btn btn-outline-primary">Aktualisieren</button>
+      <div class="row g-2 mb-2">
+        <div class="col-12 col-md-8">
+          <form method="get" class="d-flex gap-2">
+            <input type="hidden" name="campaign_id" value="<?= (int)$campaignId ?>">
+            <select class="form-select" name="script_id" onchange="this.form.submit()">
+              <?php foreach($scripts as $s): ?>
+                <option value="<?= (int)$s['id'] ?>" <?= (int)$s['id']===$graphScriptId?'selected':'' ?>>
+                  #<?= (int)$s['id'] ?> · <?= e($s['name']) ?><?= $s['status']==='active'?' · aktiv':'' ?>
+                </option>
+              <?php endforeach; ?>
+            </select>
+            <div class="form-check d-flex align-items-center ms-2">
+              <input class="form-check-input" type="checkbox" id="reachableOnly" checked>
+              <label class="form-check-label ms-1" for="reachableOnly">Nur erreichbare Knoten</label>
             </div>
           </form>
         </div>
       </div>
+
+      <div id="cy"></div>
     </div>
   </div>
+</div>
 
-  <!-- Full-width Graph unten -->
-  <div id="graph-wrap" class="container-fluid mt-3">
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <h2 class="h6 m-0">Baumdiagramm</h2>
-          <div class="toolbar">
-            <button id="btn-relayout" class="btn btn-sm btn-outline-secondary">Neu anordnen</button>
-            <button id="btn-export-png" class="btn btn-sm btn-outline-secondary">PNG</button>
-            <form id="pdfForm" class="d-inline" method="post" action="?action=export_pdf">
-              <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-              <input type="hidden" name="png_base64" id="png_base64">
-              <button id="btn-export-pdf" type="button" class="btn btn-sm btn-outline-secondary">PDF</button>
-            </form>
+</main>
+
+<!-- Node-Bearbeiten Modal -->
+<div class="modal fade" id="nodeEditModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Node bearbeiten</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="nodeEditForm">
+          <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+          <div class="row g-2">
+            <div class="col-3">
+              <label class="form-label">Node-ID</label>
+              <input id="ne-id" name="id" class="form-control" readonly>
+            </div>
+            <div class="col-3">
+              <label class="form-label">Kind</label>
+              <select id="ne-kind" name="kind" class="form-select">
+                <option value="question">question</option>
+                <option value="message">message</option>
+                <option value="action">action</option>
+              </select>
+            </div>
+            <div class="col-3">
+              <label class="form-label">Default →</label>
+              <input id="ne-next" name="next_default" type="number" class="form-control">
+            </div>
+            <div class="col-3">
+              <label class="form-label">Sort</label>
+              <input id="ne-sort" name="sort_order" type="number" class="form-control" value="0">
+            </div>
+            <div class="col-9">
+              <label class="form-label">Titel</label>
+              <input id="ne-title" name="title" class="form-control">
+            </div>
+            <div class="col-3 form-check mt-4">
+              <input class="form-check-input" type="checkbox" id="ne-term" name="is_terminal" value="1">
+              <label class="form-check-label" for="ne-term">Terminal</label>
+            </div>
+            <div class="col-12">
+              <label class="form-label">Body</label>
+              <textarea id="ne-body" name="body" rows="6" class="form-control"></textarea>
+            </div>
           </div>
-        </div>
-        <div id="cy"></div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Schließen</button>
+        <button type="button" class="btn btn-primary" id="ne-save">Speichern</button>
       </div>
     </div>
   </div>
-</main>
+</div>
 
 <footer class="mt-auto py-3 bg-white border-top"><div class="container small text-muted">© <?= date('Y') ?> KNX-Trainingcenter · Aquise Backend</div></footer>
+<script>
+function fillOptionForm(nodeId, optId, label, leadsTo, sent, sort){
+  document.getElementById('opt-edit-'+nodeId).value = optId;
+  document.getElementById('opt-label-'+nodeId).value = label;
+  document.getElementById('opt-leads-'+nodeId).value = leadsTo || '';
+  document.getElementById('opt-sent-'+nodeId).value = sent || 'neu';
+  document.getElementById('opt-sort-'+nodeId).value = sort || 0;
+  document.getElementById('opt-label-'+nodeId).scrollIntoView({behavior:'smooth',block:'center'});
+}
+
+// Modal-Editing
+let nodeEditModal, bootstrapModal;
+function openNodeEdit(id, kind, title, body, term, nextDefault, sort){
+  const idF = document.getElementById('ne-id');
+  const kindF = document.getElementById('ne-kind');
+  const titleF = document.getElementById('ne-title');
+  const bodyF = document.getElementById('ne-body');
+  const termF = document.getElementById('ne-term');
+  const nextF = document.getElementById('ne-next');
+  const sortF = document.getElementById('ne-sort');
+  idF.value = id; kindF.value = kind; titleF.value = title || ''; bodyF.value = body || ''; termF.checked = !!term; nextF.value = nextDefault || ''; sortF.value = sort || 0;
+  if (!bootstrapModal) { bootstrapModal = new bootstrap.Modal(document.getElementById('nodeEditModal')); }
+  bootstrapModal.show();
+}
+
+document.getElementById('ne-save').addEventListener('click', async ()=>{
+  const fd = new FormData(document.getElementById('nodeEditForm'));
+  const resp = await fetch('?action=update_node&campaign_id=<?= (int)$campaignId ?>&script_id=<?= (int)$graphScriptId ?>', { method:'POST', body:fd });
+  const j = await resp.json();
+  if (j.ok){ location.reload(); } else { alert('Speichern fehlgeschlagen: '+(j.error||'')); }
+});
+</script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape@3.28.1/dist/cytoscape.umd.min.js"></script>
 <script>
 (async function(){
-  function boolParam(name, def) {
-    const u = new URL(window.location.href);
-    const v = u.searchParams.get(name);
-    if (v===null) return def;
-    return v==='' ? true : (v==='1' || v==='true');
-  }
-  const reachableOnly = boolParam('reachable_only', true);
-  const flowId = new URL(window.location.href).searchParams.get('flow_id') || '';
-  const url = `?action=graph_json&flow_id=${encodeURIComponent(flowId)}&reachable_only=${reachableOnly?1:0}`;
-  const res = await fetch(url);
-  const data = await res.json();
+  const reachableOnly = document.getElementById('reachableOnly');
 
-  if (!data || !data.nodes || data.nodes.length===0) {
-    document.getElementById('cy').innerHTML = '<div class="text-center text-muted py-5">Keine Daten für das Diagramm.</div>';
+  async function loadGraph(){
+    const url = `?action=graph_json&campaign_id=<?= (int)$campaignId ?>&script_id=<?= (int)$graphScriptId ?>&reachable_only=${reachableOnly && reachableOnly.checked?1:0}`;
+    const res = await fetch(url);
+    return await res.json();
+  }
+
+  const data = await loadGraph();
+
+  // Fallback: Wenn gar nichts kommt, zeig Hinweis statt „leerer Fläche“
+  if (!data || (!data.nodes || data.nodes.length === 0)) {
+    const cyDiv = document.getElementById('cy');
+    cyDiv.innerHTML = '<div class="text-center text-muted py-5">Keine Knoten gefunden. Lege Nodes an und setze einen Root-Node im Script, dann aktualisieren.</div>';
     return;
   }
 
@@ -739,32 +764,60 @@ function node_caption($n){
           'label': 'data(label)', 'text-valign':'center', 'text-halign':'center',
           'background-color':'#64748b', 'color':'#fff', 'width':'label', 'height':'label', 'padding':'8px',
           'shape':'round-rectangle', 'font-size':'12px', 'text-wrap':'wrap', 'text-max-width': 360
-        } },
-      { selector: 'node[type = "ROOT"]',     style: {'background-color':'#0ea5e9'} },
-      { selector: 'node[type = "FLOW"]',     style: {'background-color':'#334155'} },
-      { selector: 'node[type = "SCRIPT"]',   style: {'background-color':'#10b981'} },
-      { selector: 'node[type = "QUESTION"]', style: {'background-color':'#a855f7'} },
+        }
+      },
+      { selector: 'node[type = "MESSAGE"]', style: {'background-color':'#0ea5e9'} },
+      { selector: 'node[type = "QUESTION"]', style: {'background-color':'#10b981'} },
+      { selector: 'node[type = "ACTION"]', style: {'background-color':'#a855f7'} },
+      { selector: 'node[type = "END"]',     style: {'background-color':'#ef4444'} },
       { selector: 'edge', style: {
           'curve-style':'bezier', 'target-arrow-shape':'triangle',
           'target-arrow-color':'#94a3b8', 'line-color':'#cbd5e1',
           'label':'data(label)', 'font-size':'11px',
           'text-background-color':'#ffffff', 'text-background-opacity':0.85,
           'text-rotation':'autorotate'
-        } }
+        }
+      }
     ],
-    layout: { name:'breadthfirst', roots: '#'+data.root, directed:true, padding: 30, spacingFactor:1.2, avoidOverlap:true }
+    layout: { name:'breadthfirst', roots: data.root? '#'+data.root : undefined, directed:true, padding: 30, spacingFactor:1.2, avoidOverlap:true }
   });
 
-  function relayout(){ cy.resize(); cy.layout({ name:'breadthfirst', roots:'#'+data.root, directed:true, padding:30, spacingFactor:1.2 }).run(); }
-  setTimeout(relayout, 50);
-  window.addEventListener('resize', () => cy.resize());
+  function relayout(){
+    cy.resize();
+    cy.layout({ name:'breadthfirst', roots: data.root? '#'+data.root : undefined, directed:true, padding:30, spacingFactor:1.2 }).run();
+  }
 
-  document.getElementById('btn-relayout').onclick = relayout;
-  document.getElementById('btn-export-png').onclick = () => {
+  // Erstes Resize + Relayout, falls Container gerade neu angezeigt wurde
+  setTimeout(relayout, 50);
+  window.addEventListener('resize', () => { cy.resize(); });
+
+  // Toolbar
+  const btnRelayout = document.getElementById('btn-relayout');
+  if (btnRelayout) btnRelayout.onclick = relayout;
+
+  if (reachableOnly) reachableOnly.addEventListener('change', async ()=>{
+    const d = await loadGraph();
+    cy.elements().remove();
+    if (!d.nodes || d.nodes.length === 0) {
+      document.getElementById('cy').innerHTML = '<div class="text-center text-muted py-5">Keine Knoten (Filter) sichtbar.</div>';
+      return;
+    }
+    cy.add(d.nodes);
+    cy.add(d.edges);
+    data.root = d.root;
+    relayout();
+  });
+
+  // PNG Export
+  const btnPng = document.getElementById('btn-export-png');
+  if (btnPng) btnPng.onclick = () => {
     const png = cy.png({ full:true, scale:2, bg:'white' });
     const a = document.createElement('a'); a.href = png; a.download = 'script_tree.png'; a.click();
   };
-  document.getElementById('btn-export-pdf').onclick = async () => {
+
+  // PDF Export
+  const btnPdf = document.getElementById('btn-export-pdf');
+  if (btnPdf) btnPdf.onclick = async () => {
     const png = cy.png({ full:true, scale:2, bg:'white' });
     document.getElementById('png_base64').value = png;
     const fd = new FormData(document.getElementById('pdfForm'));
@@ -772,7 +825,14 @@ function node_caption($n){
     const j = await resp.json();
     if(j.ok){ window.location.href = 'exports/'+j.path; } else { alert('PDF-Export fehlgeschlagen: '+(j.error||'')); }
   };
+
+  // Doppelklick auf Node -> Bearbeiten-Modal (nutzt bestehende Funktion)
+  cy.on('dblclick tap', 'node', (evt) => {
+    const n = evt.target;
+    openNodeEdit(n.id(), 'question', '', '', 0, '', 0);
+  });
 })();
 </script>
+
 </body>
 </html>
