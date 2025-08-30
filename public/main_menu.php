@@ -20,7 +20,7 @@ $userLabel = htmlspecialchars($_SESSION['user']['full_name'] ?? $_SESSION['user'
       <ul class="navbar-nav me-auto mb-2 mb-lg-0">
         <li class="nav-item"><a class="nav-link <?= $active(['index.php','dashboard.php']) ?>" href="/public/dashboard.php">Dashboard</a></li>
         <li class="nav-item"><a class="nav-link <?= $active(['companies.php','company_edit.php']) ?>" href="/public/companies.php">Firmen</a></li>
-        <li class="nav-item"><a class="nav-link <?= $active(['contacts.php','contact_edit.php']) ?>" href="/public/contacts.php">Kontakte</a></li>
+     <!--   <li class="nav-item"><a class="nav-link <?= $active(['contacts.php','contact_edit.php']) ?>" href="/public/contacts.php">Kontakte</a></li>  -->
         <li class="nav-item"><a class="nav-link <?= $active(['dashboard.php']) ?>" href="/public/campaigns.php">Kampagnen</a></li>
         <li class="nav-item"><a class="nav-link <?= $active(['contact_import.php']) ?>" href="/public/contact_import.php">Import (CSV)</a></li>
         <li class="nav-item"><a class="nav-link <?= $active(['agent_list.php']) ?>" href="/public/agent_list.php">Agenten</a></li>

@@ -100,16 +100,18 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
   <div class="card shadow-sm">
     <div class="table-responsive">
       <table class="table table-striped mb-0">
-        <thead class="table-light">
+      <thead class="table-light">
         <tr>
-          <th style="width: 26%">Name</th>
+          <th style="width: 24%">Name</th>
           <th style="width: 18%">Email</th>
           <th style="width: 14%">Mobil</th>
           <th style="width: 10%">Rolle</th>
           <th style="width: 10%">Status</th>
-          <th style="width: 22%">Kampagnen</th>
+          <th style="width: 16%">Kampagnen</th>
+          <th style="width: 8%">Aktion</th> <!-- NEU -->
         </tr>
-        </thead>
+      </thead>
+
         <tbody>
         <?php if (!$rows): ?>
           <tr><td colspan="6" class="text-center text-muted py-4">Keine Einträge gefunden.</td></tr>
@@ -143,6 +145,13 @@ $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
                 <span class="<?= $stClass ?>"><?= h($status) ?></span>
               </td>
               <td><?= h($r['kampagnen'] ?? '') ?></td>
+              <td>
+  <a class="btn btn-sm btn-outline-primary"
+     href="agent_edit.php?agent_id=<?= (int)$r['agent_id'] ?>">
+     Edit
+  </a>
+</td>
+
             </tr>
           <?php endforeach; ?>
         <?php endif; ?>
